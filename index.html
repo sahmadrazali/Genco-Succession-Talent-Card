@@ -1222,7 +1222,11 @@ $("#q").addEventListener("input",e=>{
 document.addEventListener("click",e=>{if(!e.target.closest(".search"))$("#qres").hidden=true});
 document.addEventListener("click",async e=>{const b=e.target.closest("[data-google]");if(!b||!FB)return;b.disabled=true;
   try{const pr=new firebase.auth.GoogleAuthProvider();pr.setCustomParameters({prompt:"select_account"});await FB.auth.signInWithPopup(pr)}
-  catch(err){console.warn(err);if(err.code!=="auth/popup-closed-by-user")toast("Google sign-in failed: "+(err.code||err.message))}finally{b.disabled=false}});
+  catch(err){console.warn(err);const c=err.code||"";
+    if(c==="auth/popup-blocked"||c==="auth/operation-not-supported-in-this-environment"||c==="auth/web-storage-unsupported"){try{const pr=new firebase.auth.GoogleAuthProvider();pr.setCustomParameters({prompt:"select_account"});await FB.auth.signInWithRedirect(pr);return}catch(e2){console.warn(e2)}}
+    if(c!=="auth/popup-closed-by-user"&&c!=="auth/cancelled-popup-request")loginErr(c,err.message)}finally{b.disabled=false}});
+const LOGIN_HELP={"auth/unauthorized-domain":"This web address is not in Firebase → Authentication → Settings → Authorized domains. Add sahmadrazali.github.io there.","auth/popup-blocked":"The browser blocked the Google window. Allow pop-ups for this site, then try again.","auth/operation-not-allowed":"Google sign-in is turned off in Firebase → Authentication → Sign-in method. Turn on Google.","auth/network-request-failed":"No connection to Google. Check the internet or office network/VPN, then try again.","auth/internal-error":"Google sign-in could not start. Open the portal in Chrome or Edge (not inside another app) and try again.","auth/web-storage-unsupported":"This browser blocks the storage Google sign-in needs. Use Chrome or Edge, or turn off strict tracking protection for this site."};
+function loginErr(code,msg){const t=code?(LOGIN_HELP[code]||"Google sign-in failed.")+" ("+code+")":(msg||"Sign-in failed.");S.loginErr=t;toast(t);const el=document.getElementById("login-err");if(el){el.textContent=t;el.hidden=false}else render()}
 document.addEventListener("keydown",e=>{if(e.key==="Escape")$("#qres").hidden=true});
 
 /* ---------- boot ---------- */
@@ -1612,7 +1616,7 @@ function loginPage(){
     <button class="btn primary" type="submit">Sign in</button>
     <div class="faint" style="font-size:12px">Admin: use the username and password from the portal owner.</div>
     <div style="display:flex;align-items:center;gap:8px;margin:2px 0" class="faint"><span style="flex:1;height:1px;background:currentColor;opacity:.25"></span><span style="font-size:12px">or</span><span style="flex:1;height:1px;background:currentColor;opacity:.25"></span></div>
-    <button class="btn" type="button" data-google>Sign in with Google</button><div class="faint" style="font-size:12px">New here? Sign in with your Google account and request access. The portal owner approves it.</div></form></section>`;
+    <button class="btn" type="button" data-google>Sign in with Google</button><div id="login-err" role="alert" ${S.loginErr?"":"hidden"} style="background:#fdecec;color:#b23b3b;border-radius:10px;padding:8px 12px;font-size:13px">${esc(S.loginErr||"")}</div><div class="faint" style="font-size:12px">New here? Sign in with your Google account and request access. The portal owner approves it.</div></form></section>`;
 }
 function tcSignInForms(){return `<form class="panel" id="tc-login-admin" style="display:flex;flex-direction:column;gap:10px"><h3 style="font-size:15px">Admin</h3><div class="faint" style="font-size:12.5px">Create and update talent cards.</div>
     <div class="field"><label for="tl-a-em">Email</label><input id="tl-a-em" type="email" autocomplete="username" required></div>
@@ -1793,7 +1797,7 @@ async function connect(){
     if(!window.firebase){S.syncState="off";render();return}
     firebase.initializeApp(FIREBASE_CONFIG);FB={auth:firebase.auth(),db:firebase.firestore()};S.db=FB.db;
     try{await FB.auth.setPersistence(firebase.auth.Auth.Persistence.SESSION)}catch(e){}
-    FB.auth.onAuthStateChanged(u=>onAuth(u));return;
+    FB.auth.onAuthStateChanged(u=>onAuth(u));FB.auth.getRedirectResult().catch(e=>{console.warn(e);loginErr(e.code,e.message)});return;
   }
   onAuth(FB.auth.currentUser);
 }
@@ -1802,11 +1806,11 @@ async function onAuth(u){
   S.positions={};S.pools={};S.syncs={};S.log=[];S.people={};S.tc.cards={};S.tc.admins={};S.staffChunks={};S.staff=[];S.staffIdx={};S.staffById={};
   S.loaded.p=S.loaded.q=false;S.tc.loaded=S.tc.adminsLoaded=false;S.syncState="on";
   if(!u){setAuth({role:null,email:""});S.me={email:"",isOwner:false,id:null};S.authReady=true;$("#who").innerHTML="<span></span>";render();updateWho();return}
-  const em=(u.email||"").toLowerCase();let role=null;
-  if(em===OWNER_EMAIL.toLowerCase()){if(u.emailVerified)role="owner";else{toast("Owner: use 'Sign in with Google'.");try{await FB.auth.signOut()}catch(e){}return}}
+  const em=(u.email||"").toLowerCase();let role=null;S.loginErr="";
+  if(em===OWNER_EMAIL.toLowerCase()){if(u.emailVerified)role="owner";else{loginErr("","Owner must use Sign in with Google.");try{await FB.auth.signOut()}catch(e){}return}}
   else{try{const r=await FB.db.doc("roles/"+em).get();if(r.exists){const rr=r.data()?.role||"admin";const trusted=u.emailVerified||em.endsWith("@"+USERNAME_DOMAIN);role=rr==="viewer"||rr==="editor"?(trusted?rr:null):"admin"}}catch(e){console.warn(e)}}
   if(!role&&u.emailVerified&&em)role="pending";
-  if(!role){toast("This account has no access to the portal.");try{await FB.auth.signOut()}catch(e){}return}
+  if(!role){loginErr("",em+" has no access to the portal.");try{await FB.auth.signOut()}catch(e){}return}
   setAuth({role,email:em});S.me={email:em,isOwner:role==="owner",id:u.uid,name:em};S.uid=u.uid;S.canWrite=role==="owner"||role==="admin"||role==="editor";S.canWriteKnown=true;S.authReady=true;S.fbUser=u;
   S.tab=role==="owner"||role==="viewer"||role==="editor"?"overview":"talentcard";S.tc.view="list";if(S.prefs.start&&role!=="pending"){const ok=(role==="admin"?OPEN_TABS:TABS).some(t=>t[0]===S.prefs.start);if(ok)S.tab=S.prefs.start}
   $("#who").innerHTML="<span></span>";
