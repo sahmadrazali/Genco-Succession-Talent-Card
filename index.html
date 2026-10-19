@@ -1274,11 +1274,12 @@ function tcList(){
   const n=r=>all.filter(c=>c.riskOfLoss===r).length;
   const adm=Object.values(S.tc.admins).filter(a=>a.email!==OWNER_EMAIL).sort((a,b)=>a.email.localeCompare(b.email));
   return `<section><div class="section-head"><div><div class="eyebrow">Employee e-portfolio · masterlist</div><h2>Talent Card</h2></div>
-    <div class="toolbar">${isViewer()?"":`<button class="btn" data-tcadmins>${S.tc.showAdmins?"Close":isOwnerSession()?"Manage access":"My password"}</button><button class="btn primary" data-tcnew>+ New talent card</button>`}${S.auth.role?`<button class="btn ghost" data-tcsignout>Sign out</button>`:""}</div></div>
+    <div class="toolbar">${isViewer()?"":`<button class="btn" data-tcadmins>${S.tc.showAdmins?"Close":isOwnerSession()?"Manage access":"My password"}</button><button class="btn" data-tcppt title="Upload talent cards from a PowerPoint file">Upload PowerPoint</button><input type="file" id="tc-ppt" accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation" multiple hidden><button class="btn primary" data-tcnew>+ New talent card</button>`}${S.auth.role?`<button class="btn ghost" data-tcsignout>Sign out</button>`:""}</div></div>
   ${S.tc.showAdmins?`<div class="panel" style="margin-bottom:14px">${isOwnerSession()?`<div class="section-head"><div><h3 style="font-size:15px">People with access</h3><div class="faint" style="font-size:12.5px"><strong>Full access</strong>: sees and edits the whole portal (cannot manage access). <strong>View only</strong>: sees the whole portal, read-only. <strong>Admin</strong>: talent cards and staff directory only.</div></div></div>
     <ul class="ppl">${adm.length?adm.map(a=>`<li><span><span class="mono">${esc(a.email.endsWith("@"+USERNAME_DOMAIN)?a.email.split("@")[0]:a.email)}</span> <span class="pill">${esc({viewer:"View only",editor:"Full access"}[a.role]||"Admin")}</span>${a.name?` <span class="faint" style="font-size:12px">${esc(a.name)}</span>`:""}</span><button class="btn ghost danger" data-tcadmrm="${esc(a.email)}">Remove access</button></li>`).join(""):`<li class="faint">No one else has access yet.</li>`}</ul>
     <div class="toolbar" style="margin-top:10px"><div class="field" style="flex:1 1 160px"><label for="tc-admin-role">Access</label><select id="tc-admin-role"><option value="editor">Full access (view &amp; edit)</option><option value="viewer">View only</option><option value="admin" selected>Admin (talent card &amp; staff)</option></select></div><div class="field" style="flex:1 1 200px"><label for="tc-admin-new">Username</label><input id="tc-admin-new" placeholder="e.g. hod1" autocomplete="off"></div><div class="field" style="flex:1 1 180px"><label for="tc-admin-pw">Password</label><input id="tc-admin-pw" type="password" autocomplete="new-password" placeholder="At least 6 characters"></div><button class="btn primary" data-tcadmadd style="align-self:end">Add user</button></div>`:""}
     ${hasPw()?`<div class="toolbar" style="margin-top:10px"><div class="field" style="flex:1 1 220px"><label for="my-pw">Change my password</label><input id="my-pw" type="password" autocomplete="new-password" placeholder="At least 6 characters"></div><button class="btn" data-mypw style="align-self:end">Change my password</button></div>`:""}</div>`:""}
+  ${S.tc.imp?tcImpPanel():""}
   <div class="kv num tc-stats"><div><div class="v">${all.length}</div><div class="l">Total employees</div></div><div><div class="v" style="color:var(--crit)">${n("High")}</div><div class="l">Risk of leaving: High</div></div><div><div class="v" style="color:var(--r1)">${n("Medium")}</div><div class="l">Medium</div></div><div><div class="v" style="color:var(--r0)">${n("Low")}</div><div class="l">Low</div></div><div><div class="v" style="color:var(--ink-3)">${all.length-n("High")-n("Medium")-n("Low")}</div><div class="l">Not rated</div></div></div>
   <div class="toolbar" style="margin:12px 0"><div class="field" style="flex:1 1 300px"><label for="tc-q">Search</label><input id="tc-q" type="search" data-tcq value="${esc(S.tc.q)}" placeholder="Name, staff ID, position or department"></div><span class="faint" style="font-size:12.5px;align-self:end">${rows.length} of ${all.length}</span></div>
   <div class="tbl-wrap" id="tc-tbl">${tcRows(rows)}</div></section>`;
@@ -1384,6 +1385,173 @@ async function tcSave(){
   }catch(e){console.error(e);toast(e?.code==="invalid_argument"?"You don't have edit access to talent cards.":e?.code==="quota_exceeded"?"Storage is full. Remove a photo or old cards and try again.":"Couldn't save. Check your connection and try again.")}
   finally{S.tc.busy=false}
 }
+/* ---------- talent card import from PowerPoint (.pptx) ---------- */
+const XLSX_URLS=["https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js","https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js","https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"];
+const TC_PH=/^\W*(x+|x+\W+x+.*|n\/?a|nil|none|null|tiada|tba|tbc|tbd|-+|\.+|\?+)\W*$/i;
+const tcReal=s=>{const t=String(s??"").trim();return !!t&&!TC_PH.test(t)};
+const PPT_HDR={"employee info":"info","kpi":"kpi","career aspiration":"asp","risk of leaving current position":"risk","successor status":"ss","education":"edu","work experience":"work","key achievements":"ach","key achievements summary":"ach","previous/ current nominations":"nom","previous/current nominations":"nom","strength":"str","strengths":"str","development":"dev","development areas":"dev"};
+const PPT_MON={jan:1,feb:2,mar:3,mac:3,apr:4,may:5,mei:5,jun:6,jul:7,aug:8,ogo:8,ogos:8,sep:9,sept:9,oct:10,okt:10,nov:11,dec:12,dis:12};
+function pptDate(s){s=String(s||"").trim();if(!s||/^[-—–\s]+$/.test(s))return "";let m;const f=(y,mo,d)=>{if(y<100)y+=y<50?2000:1900;const dt=new Date(Date.UTC(y,mo-1,d));return isNaN(dt)||mo<1||mo>12||d<1||d>31?"":dt.toISOString().slice(0,10)};
+  const mon=w=>{w=String(w).toLowerCase();return PPT_MON[w.slice(0,4)]??PPT_MON[w.slice(0,3)]??null};
+  if(m=s.match(/(\d{4})-(\d{1,2})-(\d{1,2})/))return f(+m[1],+m[2],+m[3]);
+  if(m=s.match(/(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/))return f(+m[3],+m[2],+m[1]);
+  if((m=s.match(/(\d{1,2})(?:st|nd|rd|th)?[\s\-]+([A-Za-z]{3,})\.?,?[\s\-]+(\d{2,4})/))&&mon(m[2]))return f(+m[3],mon(m[2]),+m[1]);
+  if((m=s.match(/([A-Za-z]{3,})\.?\s+(\d{1,2}),?\s+(\d{4})/))&&mon(m[1]))return f(+m[3],mon(m[1]),+m[2]);
+  if((m=s.match(/([A-Za-z]{3,})\.?\s+(\d{4})/))&&mon(m[1]))return f(+m[2],mon(m[1]),1);
+  return ""}
+const pptLines=t=>String(t||"").split("¦").map(x=>x.trim()).filter(Boolean);
+const pptStripNum=s=>String(s).replace(/^\s*(\d{1,2}|[a-z]|[ivx]{1,4})[.)]\s*(?=\S)/i,"").replace(/^[•\-–·▪●]\s*/,"").trim();
+
+async function pptRead(file){
+  if(!await loadAny(XLSX_URLS,()=>!!window.XLSX))throw new Error("Couldn't load the file reader. Check your internet connection.");
+  const zip=XLSX.CFB.read(new Uint8Array(await file.arrayBuffer()),{type:"array"});
+  const bytes=p=>{const e=XLSX.CFB.find(zip,"/"+p.replace(/^\/+/,""));return e&&e.content?e.content:null};
+  const xml=p=>{const b=bytes(p);return b?new DOMParser().parseFromString(new TextDecoder().decode(b instanceof Uint8Array?b:new Uint8Array(b)),"application/xml"):null};
+  const els=(n,ln)=>n?[...n.getElementsByTagNameNS("*",ln)]:[];
+  const kid=(n,ln)=>n?[...n.children].find(c=>c.localName===ln)||null:null;
+  const kids=(n,ln)=>n?[...n.children].filter(c=>c.localName===ln):[];
+  const rid=(n,a)=>n?.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships",a)||n?.getAttribute("r:"+a)||"";
+  const rels=p=>{const d=xml(p);const o={};els(d,"Relationship").forEach(r=>o[r.getAttribute("Id")]=r.getAttribute("Target"));return o};
+  const join=(base,t)=>{if(t.startsWith("/"))return t.slice(1);const a=base.split("/");a.pop();t.split("/").forEach(s=>{if(s==="..")a.pop();else if(s&&s!==".")a.push(s)});return a.join("/")};
+  const pres=xml("ppt/presentation.xml");if(!pres)throw new Error(file.name+" is not a PowerPoint (.pptx) file.");
+  const sz=els(pres,"sldSz")[0];const W=+sz.getAttribute("cx"),H=+sz.getAttribute("cy");
+  const prel=rels("ppt/_rels/presentation.xml.rels");
+  const slidePaths=els(pres,"sldId").map(s=>join("ppt/presentation.xml",prel[rid(s,"id")]||"")).filter(Boolean);
+  const paraText=p=>{let t="";[...p.getElementsByTagNameNS("*","*")].forEach(n=>{if(n.localName==="t")t+=n.textContent;else if(n.localName==="br")t+=" ";else if(n.localName==="tab")t+="\t"});return t.trim()};
+  const out=[];
+  slidePaths.forEach((sp,si)=>{const doc=xml(sp);if(!doc)return;const srel=rels(join(sp,"_rels/"+sp.split("/").pop()+".rels"));
+    const items=[];
+    const xf=(x)=>{if(!x)return null;const off=kid(x,"off"),ext=kid(x,"ext");if(!off||!ext)return null;return {x:+off.getAttribute("x"),y:+off.getAttribute("y"),w:+ext.getAttribute("cx"),h:+ext.getAttribute("cy"),x2:x}};
+    const walk=(tree,T)=>{[...tree.children].forEach(n=>{const ln=n.localName;
+      if(ln==="grpSp"){const g=xf(kid(kid(n,"grpSpPr"),"xfrm"));let T2=T;if(g){const co=kid(g.x2,"chOff"),ce=kid(g.x2,"chExt");const cx=co?+co.getAttribute("x"):g.x,cy=co?+co.getAttribute("y"):g.y,cw=ce?+ce.getAttribute("cx")||g.w:g.w,ch=ce?+ce.getAttribute("cy")||g.h:g.h;const sx=g.w/cw,sy=g.h/ch;T2=p=>T({x:g.x+(p.x-cx)*sx,y:g.y+(p.y-cy)*sy,w:p.w*sx,h:p.h*sy})}walk(n,T2);return}
+      let box=null,item=null;
+      if(ln==="sp"){box=xf(kid(kid(n,"spPr"),"xfrm"));const tb=kid(n,"txBody");if(tb){const t=kids(tb,"p").map(paraText).filter(Boolean).join(" ¦ ");item=["T",t]}}
+      else if(ln==="graphicFrame"){box=xf(kid(n,"xfrm"));const tbl=els(n,"tbl")[0];if(tbl)item=["TB",kids(tbl,"tr").map(tr=>kids(tr,"tc").map(tc=>els(tc,"p").map(paraText).filter(Boolean).join("\n").trim()))]}
+      else if(ln==="pic"){box=xf(kid(kid(n,"spPr"),"xfrm"));const bf=kid(n,"blipFill");const bl=kid(bf,"blip");const sr=kid(bf,"srcRect");const tgt=srel[rid(bl,"embed")];
+        if(tgt){const cr=k=>sr&&sr.getAttribute(k)?(+sr.getAttribute(k))/100000:0;item=["PIC",{path:join(sp,tgt),l:cr("l"),t:cr("t"),r:cr("r"),b:cr("b")}]}}
+      if(!item)return;const b=box?T(box):{x:0,y:0,w:0,h:0};
+      items.push([item[0],b.x/W*100,b.y/H*100,b.w/W*100,b.h/H*100,item[1]])})};
+    const tree=els(doc,"spTree")[0];if(tree)walk(tree,b=>b);
+    out.push({n:si+1,items,bytes})});
+  return out}
+
+const PPT_TITLE=/\(\s*\d{6,8}\s*\)|,\s*\d{8}\s*,/;
+function pptSlideCard(sl){
+  const hdrs=[],pics=[],rest=[];let title="";
+  sl.items.forEach(it=>{const [k,x,y,w,h,c]=it;
+    if(k==="T"){const key=c.trim().toLowerCase().replace(/:$/,"").replace(/\s+/g," ");if(PPT_HDR[key]){hdrs.push([PPT_HDR[key],x,y,w,h]);return}
+      if(PPT_TITLE.test(c)&&!title){title=c;return}}
+    if(k==="PIC"){pics.push(it);return}
+    if(k==="TB"&&c.length===1&&c[0].length===1&&/\(\d{8}\)|^[A-Z][a-z]/.test(c[0][0])&&y<12){title+=" "+c[0][0].replace(/\n/g," ");return}
+    rest.push(it)});
+  if(!PPT_TITLE.test(title))return null;
+  const sec={};hdrs.forEach(h=>sec[h[0]]=[]);
+  rest.forEach(([k,x,y,w,h,c])=>{let best=null;hdrs.forEach(([hd,hx,hy,hw])=>{const ov=Math.min(x+w,hx+hw)-Math.max(x,hx);if(ov<=Math.min(w,hw)*0.3||hy>y+1)return;const d=y-hy;if(!best||d<best[0])best=[d,hd]});(sec[best?best[1]:"_other"]??=[]).push([k,c])});
+  const texts=k=>(sec[k]||[]).filter(i=>i[0]==="T"&&String(i[1]).trim()).map(i=>i[1]);
+  /* a cell holding several paragraphs: split the row when the cells line up (e.g. 3 years next to 3 posts), else join */
+  const fixTb=tb=>tb.flatMap(row=>{const parts=row.map(x=>String(x||"").split("\n").map(y=>y.trim()).filter(Boolean));const n=Math.max(1,...parts.map(p=>p.length));
+    if(n>1&&parts.filter(p=>p.length===n).length>=2&&parts.every(p=>p.length<=1||p.length===n))return Array.from({length:n},(_,i)=>parts.map(p=>p.length===n?p[i]:(i===0?(p[0]||""):"")));
+    return [parts.map(p=>p.join(" "))]});
+  const tables=k=>(sec[k]||[]).filter(i=>i[0]==="TB").map(i=>fixTb(i[1]));
+  const c={};const t_=title.replace(/‎/g,"").replace(/\s+/g," ").trim();
+  const m=t_.match(/^\s*(.*?)[,\s]*\(\s*(\d{6,8})\s*\)[,\s]*(.*)$/)||t_.match(/^\s*(.*?)[,\s]+(\d{8})[,\s]+(.*)$/);
+  c.name=m[1].replace(/^[\s,]+|[\s,]+$/g,"");c.staffId=m[2];c.post=m[3].replace(/^[\s,.]+|[\s,.]+$/g,"");
+  /* employee info */
+  const t=texts("info");const lab=t.find(x=>/Grade/i.test(x))||"";const vals=t.filter(x=>x!==lab);
+  let info={};const L=pptLines(lab).map(x=>x.replace(/\s*[:;]\s*$/,"").trim().toLowerCase());const V=vals.length?pptLines(vals[0]):[];
+  if(V.length)L.forEach((l,i)=>info[l]=V[i]??"");else pptLines(lab).forEach(l=>{const mm=l.match(/([^:;]+)[:;]\s*(.*)/);if(mm&&mm[2].trim())info[mm[1].trim().toLowerCase()]=mm[2].trim()});
+  c.grade=tcReal(info.grade)?info.grade:"";const ag=String(info.age||"").match(/\d+/);c.age=ag?+ag[0]:null;
+  c.dateJoined=pptDate(info["date joined tnb"]||info["date joined"]);c.retirementDate=pptDate(info["retirement date"]);c.contractEndDate=pptDate(info["contract end date"]||info["contract end"]);c.flag=tcReal(info.flag)?info.flag:"";
+  /* kpi */
+  let kp=[];tables("kpi").concat(tables("_other")).forEach(tb=>{if(!tb.length||!tb[0])return;const hd=tb[0].filter(Boolean);if(!hd.length||!hd.every(x=>/^20\d\d/.test(x)))return;
+    if(tb.length>1&&tb[1].some(Boolean))tb[0].forEach((y,i)=>{if(y)kp.push([y.trim().slice(0,4),String(tb[1][i]||"").trim()])});else hd.forEach(x=>{const p=x.split(/\s+/);kp.push([p[0].slice(0,4),p[1]||""])})});
+  const seen={};kp.forEach(([y,v])=>{if(v&&!/x{2,}|^\W*$/i.test(v)&&!seen[y])seen[y]=v});c.kpi=Object.keys(seen).sort().map(y=>({year:y,score:seen[y]}));
+  /* lists */
+  const bl=k=>{const o=[];let src="";tables(k).forEach(tb=>tb.forEach(row=>{const cells=row.map(x=>String(x||"").trim()).filter(Boolean);if(!cells.length||/^(description|achievement|key achievement|no\.?)$/i.test(cells[0])&&cells.length<2)return;o.push(cells.join(" — "))}));
+    texts(k).forEach(x=>pptLines(x).forEach(l=>{if(/^source\s*:/i.test(l)){src=l.replace(/^source\s*:\s*/i,"");return}o.push(l)}));return [o.map(pptStripNum).filter(tcReal),src]};
+  c.careerAspiration=bl("asp")[0];
+  const r=texts("risk").join(" ¦ ");const g=k=>{const mm=r.match(new RegExp(k+"\\s*:\\s*([^¦]*)","i"));return mm?mm[1].trim():""};
+  const cap=x=>/^(low|medium|high)$/i.test(x)?x[0].toUpperCase()+x.slice(1).toLowerCase():x;
+  c.riskOfLoss=cap(g("Risk of Loss"));c.impactOfLoss=cap(g("Impact of Loss"));const rf=g("Reason for Leaving");c.reasonForLeaving=tcReal(rf)?rf[0].toUpperCase()+rf.slice(1):"";
+  /* education */
+  const ed=[];tables("edu").forEach(tb=>tb.forEach(row=>{row=row.filter(Boolean);if(!row.length||/^(qualification|education|level)$/i.test(row[0]))return;const yr=row.find(x=>/^(19|20)\d\d$/.test(x))||"";const rs=row.filter(x=>x!==yr);ed.push({level:rs[0]||"",detail:rs.slice(1).join(", "),year:yr})}));
+  if(!ed.length)texts("edu").forEach(x=>pptLines(x).forEach(l=>ed.push({level:l.replace(/\s{2,}/g," · "),detail:"",year:""})));
+  c.education=ed.filter(e=>tcReal(e.level)||tcReal(e.detail));
+  /* work */
+  const wk=[];tables("work").forEach(tb=>tb.forEach(row=>{row=row.map(x=>String(x||"").trim());if(!row.some(Boolean)||/^(year|date)$/i.test(row[0]))return;let yr="";const rs=[];row.forEach(x=>{if(!yr&&/(19|20)\d\d/.test(x)&&x.length<=12)yr=x;else if(/^(E|CM|M|J|GM)\d{2}\w?$/.test(x))return;else if(x)rs.push(x)});const post=rs.reduce((a,b)=>b.length>a.length?b:a,"");wk.push({year:yr,company:rs.filter(x=>x!==post).join(", "),post,dept:""})}));
+  if(!wk.length)texts("work").forEach(x=>pptLines(x).forEach(l=>wk.push({year:"",company:"",post:pptStripNum(l),dept:""})));
+  c.workExperience=wk.filter(w=>tcReal(w.post));
+  const [ach]=bl("ach"),[st,s1]=bl("str"),[dv,s2]=bl("dev");c.keyAchievements=ach;c.strength=st;c.development=dv;c.assessmentSource=s1||s2||"";
+  /* nominations */
+  const nm=[];tables("nom").forEach(tb=>tb.slice(1).forEach(row=>{const v=row.filter(Boolean);if(!v.length)return;const date=v.find(x=>/\d{1,2}\/\d{1,2}\/\d{2,4}|20\d\d/.test(x))||"";const rd=v.find(x=>/^R[0-2]$/.test(x))||"";const pos=v[0];if(!tcReal(pos))return;const s=v.find(x=>![pos,rd,date].includes(x))||"";nm.push({position:pos,readiness:rd,status:s||(date?"Approved":""),approvalDate:pptDate(date)})}));
+  c.nominations=nm;
+  /* portrait: biggest picture in the top part of the slide */
+  const cand=pics.filter(p=>p[3]*p[4]>40&&p[2]<40&&p[4]*9>=p[3]*16*0.8).sort((a,b)=>b[3]*b[4]-a[3]*a[4]);c._pic=cand[0]?cand[0][5]:null;
+  return c}
+
+function pptPhoto(bytes,pic){return new Promise(res=>{if(!pic)return res("");const b=bytes(pic.path);if(!b)return res("");const ext=(pic.path.split(".").pop()||"").toLowerCase();if(!["png","jpg","jpeg","gif","bmp","webp"].includes(ext))return res("");
+  const url=URL.createObjectURL(new Blob([b],{type:"image/"+(ext==="jpg"?"jpeg":ext)}));const img=new Image();
+  img.onload=()=>{try{const W=img.naturalWidth,H=img.naturalHeight;let sx=W*pic.l,sy=H*pic.t,sw=W*(1-pic.l-pic.r),sh=H*(1-pic.t-pic.b);if(sw<W*0.05||sh<H*0.05){sx=0;sy=0;sw=W;sh=H}
+    const m=340,sc=Math.min(1,m/Math.max(sw,sh));const cv=document.createElement("canvas");cv.width=Math.max(1,Math.round(sw*sc));cv.height=Math.max(1,Math.round(sh*sc));const ctx=cv.getContext("2d");ctx.fillStyle="#fff";ctx.fillRect(0,0,cv.width,cv.height);ctx.drawImage(img,sx,sy,sw,sh,0,0,cv.width,cv.height);res(cv.toDataURL("image/jpeg",0.82))}catch(e){res("")}finally{URL.revokeObjectURL(url)}};
+  img.onerror=()=>{URL.revokeObjectURL(url);res("")};img.src=url})}
+
+function tcFindExisting(c){const sid=String(c.staffId||"");if(sid&&S.tc.cards[sid])return sid;
+  const hit=Object.entries(S.tc.cards).find(([,x])=>sid&&String(x.staffId||"")===sid)||Object.entries(S.tc.cards).find(([,x])=>skey(x.name)&&skey(x.name)===skey(c.name));return hit?hit[0]:null}
+function tcMergePpt(c,mode){
+  const exId=tcFindExisting(c);const base=JSON.parse(JSON.stringify(exId?S.tc.cards[exId]:blankCard()));delete base.updatedAt;delete base.updatedBy;
+  const d=base;const has=v=>Array.isArray(v)?v.length>0:v!=null&&String(v).trim()!=="";
+  const fillOnly=mode==="fill"&&exId;const realList=v=>Array.isArray(v)&&v.some(x=>typeof x==="string"?tcReal(x):Object.values(x||{}).some(tcReal));
+  const changed=[];const LBL={careerAspiration:"Career aspiration",education:"Education",workExperience:"Work experience",keyAchievements:"Key achievements",strength:"Strength",development:"Development",nominations:"Nominations",kpi:"KPI",riskOfLoss:"Risk of loss",photoDataUrl:"Photo"};
+  ["name","staffId","post","grade","age","dateJoined","retirementDate","contractEndDate","flag","riskOfLoss","impactOfLoss","reasonForLeaving","assessmentSource","careerAspiration","education","workExperience","keyAchievements","strength","development","nominations","kpi","photoDataUrl"].forEach(k=>{if(!has(c[k]))return;
+    const cur=d[k];const curHas=Array.isArray(cur)?realList(cur):has(cur);if(fillOnly&&curHas)return;
+    if(exId&&curHas&&LBL[k]&&JSON.stringify(cur)!==JSON.stringify(c[k]))changed.push(LBL[k]+(Array.isArray(cur)&&c[k].length<cur.length?` (${cur.length}→${c[k].length})`:""));
+    d[k]=c[k]});
+  /* staffing data is the source of truth for identity, grade and dates */
+  let st=S.staffById?.[String(c.staffId)]||null;if(st&&skey(st.n).slice(0,6)!==skey(c.name).slice(0,6))st=null;if(!st)st=S.staffIdx?.[skey(c.name)]||null;
+  if(st){Object.assign(d,{name:st.n,staffId:st.sn,post:st.pos+(st.job&&st.job!==st.pos?", "+st.job:""),department:st.dept||d.department,grade:st.g||d.grade,age:staffAge(st)??d.age,retirementDate:st.ret||d.retirementDate,dateJoined:st.joined||d.dateJoined,email:d.email||st.em||""});
+    const k=st.kpi;if(k&&Object.keys(k).length){const cur={};(d.kpi||[]).forEach(x=>{if(x&&x.year)cur[String(x.year).slice(0,4)]=x});KPI_YEARS.forEach(y=>{if(k[y])cur[String(y)]={year:String(y),score:k[y]};else if(!cur[String(y)])cur[String(y)]={year:String(y),score:"N/A"}});d.kpi=Object.values(cur).sort((a,b)=>String(a.year).localeCompare(String(b.year))).slice(-3)}}
+  if(!d.successorStatus?.length)d.successorStatus=blankCard().successorStatus;
+  const filled=[d.photoDataUrl,d.grade&&d.retirementDate,(d.kpi||[]).some(x=>tcReal(x.score)),(d.careerAspiration||[]).length,(d.education||[]).length,(d.workExperience||[]).length,(d.keyAchievements||[]).length,(d.strength||[]).length,(d.development||[]).length].filter(Boolean).length;
+  return {card:d,exId,inStaff:!!st,filled,changed}}
+
+async function tcImportPpt(files){
+  S.tc.imp={busy:true,msg:"Reading PowerPoint…",items:[],skipped:[],mode:"replace"};render();
+  const LISTS=["careerAspiration","education","workExperience","keyAchievements","strength","development","nominations","kpi"];
+  const raw=[];const byId={};
+  try{for(const f of files){let slides;try{slides=await pptRead(f)}catch(e){console.error(e);S.tc.imp.skipped.push(`${f.name}: ${e.message||"could not be read"}`);continue}
+      const bytes=slides[0]?.bytes;let found=0;
+      for(const sl of slides){S.tc.imp.msg=`Reading ${f.name}, slide ${sl.n} of ${slides.length}…`;let c=null;try{c=pptSlideCard(sl)}catch(e){console.error(e)}
+        if(!c)continue;found++;c._bytes=bytes;c._file=f.name;c._slide=sl.n;
+        const prev=byId[c.staffId];
+        if(prev&&prev._file===f.name&&prev._last===sl.n-1){ /* continuation slide of the same person */
+          LISTS.forEach(k=>{if(k==="kpi"){if(!prev.kpi.length)prev.kpi=c.kpi;return}prev[k]=(prev[k]||[]).concat(c[k]||[])});
+          Object.keys(c).forEach(k=>{if(!LISTS.includes(k)&&!k.startsWith("_")&&(prev[k]==null||prev[k]==="")&&c[k]!=null&&c[k]!=="")prev[k]=c[k]});
+          if(!prev._pic&&c._pic)prev._pic=c._pic;prev._last=sl.n;continue}
+        c._last=sl.n;if(prev)raw[raw.indexOf(prev)]=c;else raw.push(c);byId[c.staffId]=c}
+      if(!found)S.tc.imp.skipped.push(`${f.name}: no talent card slide found (the title must read "Name, (Staff ID), Position")`)}
+    for(const c of raw){S.tc.imp.msg=`Preparing ${c.name}…`;
+      ["keyAchievements","strength","development","careerAspiration"].forEach(k=>{const seen=new Set();c[k]=c[k].filter(x=>{const q=x.toLowerCase();if(seen.has(q))return false;seen.add(q);return true})});
+      c.photoDataUrl=await pptPhoto(c._bytes,c._pic);const src={file:c._file,slide:c._slide};Object.keys(c).filter(k=>k.startsWith("_")).forEach(k=>delete c[k]);
+      S.tc.imp.items.push({...tcMergePpt(c,S.tc.imp.mode),...src,raw:c,sel:true})}
+  }finally{S.tc.imp.busy=false;S.tc.imp.msg="";render()}}
+
+function tcImpPanel(){const I=S.tc.imp;if(I.busy)return `<div class="panel" style="margin-bottom:14px"><div class="faint">${esc(I.msg||"Reading…")}</div></div>`;
+  const n=I.items.filter(x=>x.sel).length;const up=I.items.filter(x=>x.sel&&x.exId).length;
+  return `<div class="panel" style="margin-bottom:14px"><div class="section-head"><div><h3 style="font-size:15px">Upload from PowerPoint</h3><div class="faint" style="font-size:12.5px">${I.items.length} talent card${I.items.length===1?"":"s"} found. Name, position, grade and dates come from the staffing data where the person is listed. Empty sections in a slide never erase what a card already has.</div>
+    ${I.items.some(x=>x.exId)?`<div class="field" style="margin-top:8px;max-width:420px"><label for="tc-imp-mode">For cards that already exist</label><select id="tc-imp-mode" data-tcimpmode><option value="replace" ${I.mode!=="fill"?"selected":""}>Replace sections with what the slide has</option><option value="fill" ${I.mode==="fill"?"selected":""}>Only fill sections that are still empty</option></select></div>`:""}</div>
+    <div class="toolbar"><button class="btn" data-tcimpx>Cancel</button><button class="btn primary" data-tcimpsave ${n&&!I.saving?"":"disabled"}>${I.saving?esc(I.saving):`Save ${n} card${n===1?"":"s"}${up?` (${up} update${up===1?"":"s"})`:""}`}</button></div></div>
+    ${I.skipped.length?`<div class="faint" style="font-size:12.5px;color:var(--crit);margin:6px 0">${I.skipped.map(esc).join("<br>")}</div>`:""}
+    ${I.items.length?`<div class="tbl-wrap"><table class="tc-table"><thead><tr><th style="width:34px"><input type="checkbox" aria-label="Select all" data-tcimpall ${I.items.every(x=>x.sel)?"checked":""}></th><th>Employee</th><th>Action</th><th>What changes</th><th>Sections filled</th><th>Source</th></tr></thead><tbody>
+    ${I.items.map((x,i)=>`<tr><td><input type="checkbox" aria-label="Include ${esc(x.card.name)}" data-tcimpsel="${i}" ${x.sel?"checked":""}></td><td><div class="tc-who">${avatar(x.card,34)}<div><strong>${esc(x.card.name)}</strong><div class="faint mono" style="font-size:11.5px">${esc(x.card.staffId)} · ${esc(x.card.grade||"")}${x.inStaff?"":` · <span style="color:var(--crit)">not in staffing data</span>`}</div></div></div></td>
+      <td><span style="display:inline-block;white-space:nowrap;font-size:12px;font-weight:600;padding:3px 10px;border-radius:99px;${x.exId?"background:#e3eefa;color:#0a5cab":"background:#e5f5ec;color:#2f8a5f"}">${x.exId?"Update card":"New card"}</span></td><td style="font-size:12.5px;max-width:280px">${x.exId?(x.changed.length?esc(x.changed.join(", ")):`<span class="faint">No change</span>`):`<span class="faint">All sections from the slide</span>`}</td><td class="num">${x.filled}/9</td><td class="faint" style="font-size:12px">${esc(x.file)} · slide ${x.slide}</td></tr>`).join("")}</tbody></table></div>`:""}</div>`}
+
+async function tcImpSave(){const I=S.tc.imp;const list=I.items.filter(x=>x.sel);if(!list.length)return;let ok=0,fail=0;
+  for(const x of list){I.saving=`Saving ${ok+fail+1} of ${list.length}…`;render();
+    try{const d=tcClean(x.card);let id=x.exId;if(!id){id=(d.staffId||"").replace(/[^A-Za-z0-9_-]/g,"")||("tc-"+Date.now().toString(36));if(S.tc.cards[id])id=id+"-"+Date.now().toString(36)}
+      await S.db.doc("talentCards/"+id).set({...d,updatedAt:new Date().toISOString(),updatedBy:S.uid||""});ok++}catch(e){console.error(e);fail++}}
+  if(ok)await logIt(`uploaded ${ok} talent card${ok===1?"":"s"} from PowerPoint`,list.slice(0,20).map(x=>x.card.name).join(", "),"TC");
+  S.tc.imp=null;render();toast(fail?`${ok} saved, ${fail} could not be saved. Check your access and connection.`:`${ok} talent card${ok===1?"":"s"} saved`)}
+
 function resizePhoto(file){return new Promise((res,rej)=>{const fr=new FileReader();fr.onerror=rej;fr.onload=()=>{const img=new Image();img.onerror=rej;img.onload=()=>{const m=340,sc=Math.min(1,m/Math.max(img.width,img.height));const cv=document.createElement("canvas");cv.width=Math.round(img.width*sc);cv.height=Math.round(img.height*sc);const ctx=cv.getContext("2d");ctx.fillStyle="#fff";ctx.fillRect(0,0,cv.width,cv.height);ctx.drawImage(img,0,0,cv.width,cv.height);res(cv.toDataURL("image/jpeg",0.82))};img.src=fr.result};fr.readAsDataURL(file)})}
 
 /* ---------- slide view (13.33 x 7.5) ---------- */
@@ -1695,6 +1863,9 @@ document.addEventListener("click",e=>{
   if(t.hasAttribute("data-tcret")){const r=S.tc.ret;S.tc.ret=null;S.tc.view="list";S.tc.mode="view";S.editing=null;closeSlide();if(r){S.tab=r.tab;S.filter=r.filter??S.filter}render();if(r)restoreY(r.y);return}
   if(t.hasAttribute("data-tcback")){S.tc.ret=null;S.tc.view="list";S.tc.mode="view";S.editing=null;closeSlide();render();restoreY(S.tc.listY||0);return}
   if(t.hasAttribute("data-aiexp")){if(isOwnerSession())aiExport();return}
+  if(t.hasAttribute("data-tcppt")){document.getElementById("tc-ppt")?.click();return}
+  if(t.hasAttribute("data-tcimpx")){S.tc.imp=null;render();return}
+  if(t.hasAttribute("data-tcimpsave")){if(S.tc.imp&&!S.tc.imp.saving)tcImpSave();return}
   if(t.hasAttribute("data-tcedit")){S.tc.draft=JSON.parse(JSON.stringify(S.tc.cards[S.tc.id]));if(!S.tc.draft.successorStatus?.length)S.tc.draft.successorStatus=blankCard().successorStatus;S.tc.mode="edit";S.editing="tc";render();return}
   if(t.hasAttribute("data-tcnew")){S.tc.draft=blankCard();S.tc.isNew=true;S.tc.id=null;S.tc.view="card";S.tc.mode="edit";S.editing="tc";render();document.getElementById("tce-name")?.focus();return}
   if(t.hasAttribute("data-tccancel")){const wasNew=S.tc.isNew;S.tc.mode="view";S.tc.draft=null;S.tc.isNew=false;S.editing=null;if(wasNew)S.tc.view="list";render();return}
@@ -1728,6 +1899,10 @@ document.addEventListener("input",e=>{
 });
 document.addEventListener("change",async e=>{
   const el=e.target;
+  if(el.id==="tc-ppt"&&el.files?.length){const fs=[...el.files];el.value="";tcImportPpt(fs);return}
+  if(el.dataset&&el.dataset.tcimpsel!=null&&S.tc.imp){S.tc.imp.items[+el.dataset.tcimpsel].sel=el.checked;render();return}
+  if(el.dataset&&el.dataset.tcimpmode!=null&&S.tc.imp){S.tc.imp.mode=el.value;S.tc.imp.items=S.tc.imp.items.map(x=>({...x,...tcMergePpt(x.raw,el.value)}));render();return}
+  if(el.dataset&&el.dataset.tcimpall!=null&&S.tc.imp){S.tc.imp.items.forEach(x=>x.sel=el.checked);render();return}
   if(el.id==="tc-photo"&&el.files?.[0]){try{S.tc.draft.photoDataUrl=await resizePhoto(el.files[0]);setTimeout(render,0);toast("Photo added. Save to keep it.")}catch(err){toast("That file couldn't be read as an image.")}return}
   if(el.id==="tce-name"&&S.tc.draft){if(tcFillFromStaff(el.value)){setTimeout(render,0);toast("Filled in from staffing data, including KPI")}}
   if(el.id==="tce-staffId"&&S.tc.draft&&el.value.trim()&&!String(S.tc.draft.name||"").trim()){if(tcFillFromStaff(el.value,true)){setTimeout(render,0);toast("Filled in from staffing data, including KPI")}}
