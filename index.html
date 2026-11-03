@@ -122,6 +122,36 @@ main{padding-top:24px;display:flex;flex-direction:column;gap:28px}
 .seg button{border:0;background:none;padding:6px 12px;cursor:pointer;font-size:13px;color:var(--ink-2)}
 .seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
 
+/*mx*/
+/* ---------- successor matrix (SGM, PGM, PD/PM) ---------- */
+.mx{width:100%;border-collapse:separate;border-spacing:0;background:var(--surface,#fff);border:1px solid var(--line,#e2eaf4);border-radius:16px;overflow:hidden}
+.mx th{padding:0;border-bottom:1px solid var(--line,#e2eaf4);background:var(--sunk,#f6f9fd);vertical-align:middle}
+.mx th .h{padding:10px 14px;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;opacity:.7;text-align:left}
+.mx th .rh{margin:8px 10px;border-radius:9px;padding:6px 10px;font-weight:700;font-size:12px;text-align:center;white-space:nowrap}
+.mx .k0{background:var(--r0-soft,#e5f5ec);color:var(--r0-ink,#2f8a5f)}.mx .k1{background:var(--r1-soft,#fdf1e3);color:var(--r1-ink,#b8722a)}.mx .k2{background:var(--r2-soft,#fdecec);color:var(--r2-ink,#c25454)}
+.mx td{padding:12px 14px;border-bottom:1px solid var(--line,#edf2f8);vertical-align:top}
+.mx tbody tr:last-child td{border-bottom:0}
+.mx td.rc{border-left:1px solid var(--line,#edf2f8);min-width:170px}
+.mx .cntb{display:inline-block;font-weight:700;font-size:11px;border-radius:99px;padding:1px 8px;margin-bottom:8px}
+.mx .pn{font-size:13px;line-height:1.3;margin-bottom:7px;display:flex;gap:8px;align-items:baseline;justify-content:space-between}
+.mx .pn .linkish{text-align:left;font-weight:500}
+.mx .pn small{font-family:var(--f-mono,monospace);font-size:10.5px;opacity:.6;white-space:nowrap}
+.mx .pn .nt{display:block;font-size:11px;opacity:.7;margin-top:1px}
+.mx .more{font-size:12px;font-weight:600;color:var(--accent);background:none;border:0;padding:0;cursor:pointer}
+.mx .nor0{color:var(--r2-ink,#c25454);font-size:12px;font-weight:700;background:var(--r2-soft,#fdecec);border-radius:8px;padding:3px 8px;display:inline-block}
+.mx .incb{display:flex;gap:10px;align-items:flex-start;background:var(--sunk,#f6f9fd);border-radius:12px;padding:8px 10px}
+.mx .av{width:34px;height:34px;border-radius:50%;background:var(--accent-soft,#dbe8f7);color:var(--accent);display:grid;place-items:center;font-weight:700;font-size:12px;flex:none;overflow:hidden}
+.mx .av img{width:100%;height:100%;object-fit:cover}
+.mx .incm{font-size:12px;opacity:.75;margin-top:1px}
+.mx .rowf{display:flex;gap:8px;align-items:center;margin-top:10px;font-size:11.5px;opacity:.85}
+.mx .flags{display:flex;gap:4px;flex-wrap:wrap;margin-top:5px}
+.mx tr.catr td{background:var(--sunk,#f6f9fd);padding:9px 14px}
+.mx .pbox{border:1px solid var(--line,#edf2f8);border-radius:12px;padding:8px 10px;margin-bottom:8px}
+.mx .pbox:last-child{margin-bottom:0}
+.mx .pbox .tt{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.mx-wrap{overflow-x:auto;margin-top:12px}
+@media (max-width:900px){.mx{min-width:820px}}
+
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;align-items:start}
 @media (max-width:420px){.cards{grid-template-columns:1fr}}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);display:flex;flex-direction:column}
@@ -786,10 +816,12 @@ function vTrack(tr){
   const pass=p=>S.filter==="all"||(S.filter==="vacant"?isVacant(p):risks(p).length>0);
   const head=`<div class="section-head"><div><div class="eyebrow">${tr==="L2"?"Successors named per position":"Successors named per category; one person can sit in several categories"}</div><h2>${esc(TRACKS[tr].name)}</h2></div><div class="toolbar">${filt}${S.canWrite?`<button class="btn primary" data-posadd="${tr}">+ Add position</button>`:""}<button class="btn" data-exp="xlsx:${tr}" title="Download successor list as Excel">⬇ Excel</button><button class="btn" data-exp="pptx:${tr}" title="Download successor list as PowerPoint">⬇ PPT</button>${legend}</div></div>${ro}`;
   if(tr==="L2"){
-    return `<section>${head}${l2Summary(ps.filter(pass))}<div class="subhead"><div class="eyebrow">Successor detail</div><h3 style="font-size:17px">Position cards</h3></div><div class="cards" style="margin-top:12px">${ps.filter(pass).map(p=>l2Card(p)).join("")||`<div class="empty">No positions match this filter.</div>`}</div></section>`;
+    return `<section>${head}${l2Summary(ps.filter(pass))}<div class="subhead"><div class="eyebrow">Successor detail</div><h3 style="font-size:17px">Successors by position</h3></div>${ps.filter(pass).length?mxL2(ps.filter(pass)):`<div class="empty">No positions match this filter.</div>`}</section>`;
   }
   const cats=[...new Set(ps.map(p=>p.cat))];
-  return `<section>${head}<div style="display:flex;flex-direction:column;gap:30px;margin-top:14px">${cats.map(cat=>{
+  const editCat=cats.find(cat=>{const cp=ps.filter(p=>p.cat===cat);return S.editing==="pool:"+cp[0].pool||cp.some(p=>S.editing==="pos:"+p.id)});
+  const rows=cats.filter(c=>c!==editCat).map(cat=>{const cps=ps.filter(p=>p.cat===cat).filter(pass);if(!cps.length)return "";const poolId=ps.find(p=>p.cat===cat).pool;return mxCat(tr,cat,ps,cps,poolId,S.pools[poolId])}).join("");
+  const editBlock=editCat?`<div style="display:flex;flex-direction:column;gap:30px;margin-top:14px">${[editCat].map(cat=>{
     const cps=ps.filter(p=>p.cat===cat).filter(pass);const pool=S.pools[ps.find(p=>p.cat===cat).pool];const poolId=ps.find(p=>p.cat===cat).pool;
     if(!cps.length)return"";
     const c=counts(pool?.successors);
@@ -801,8 +833,40 @@ function vTrack(tr){
         <div class="bench">${ed?benchEdit(pool,poolId):benchView(pool)}</div>
         <div class="card-f">${editedLine(pool)}${ed?`<div class="edit-actions"><button class="btn" data-cancel>Cancel</button><button class="btn primary" data-savepool="${poolId}">Save bench</button></div>`:(S.canWrite?`<button class="btn" data-edit="pool:${poolId}">Edit successors</button>`:"")}</div>
       </div>
-    </div></div>`}).join("")}</div></section>`;
+    </div></div>`}).join("")}</div>`:"";
+  return `<section>${head}${editBlock}${rows?`<div class="mx-wrap"><table class="mx">${mxHead("34%")}<tbody>${rows}</tbody></table></div>`:(editBlock?"":`<div class="empty">No positions match this filter.</div>`)}</section>`;
 }
+
+/* ---------- successor matrix ---------- */
+S.mxOpen=S.mxOpen||{};
+function mxIni(n){return String(n||"").replace(/\b(bin|binti|bt|b|a\/l|a\/p|dato'?|datuk|dr|ir|ts|haji|hj)\b\.?/gi," ").trim().split(/\s+/).filter(Boolean).slice(0,2).map(x=>x[0]).join("").toUpperCase()}
+function mxAvatar(name){const c=S.tc?.cards?Object.values(S.tc.cards).find(x=>skey(x.name)===skey(name)):null;return `<div class="av">${c?.photoDataUrl?`<img alt="" src="${esc(c.photoDataUrl)}">`:esc(mxIni(name))}</div>`}
+function mxCols(pool,key){const list=sortS(pool?.successors||[]);
+  return ["R0","R1","R2"].map((k,i)=>{const L=list.filter(x=>x.r===k);const ok=key+":"+k;const open=!!S.mxOpen[ok];const show=open?L:L.slice(0,5);
+    return `<td class="rc">${L.length?`<span class="cntb k${i}">${L.length} ${L.length===1?"successor":"successors"}</span>`:""}
+      ${show.map(x=>`<div class="pn"><span><button class="linkish" data-person="${esc(x.n)}">${esc(x.n)}</button>${x.note?`<span class="nt">${esc(x.note)}</span>`:""}</span><small>${esc(liveGrade(x.n,x.g))}</small></div>`).join("")||(k==="R0"?`<span class="nor0">No R0</span>`:`<span class="faint">—</span>`)}
+      ${L.length>5?`<button class="more" data-mxmore="${esc(ok)}">${open?"Show less ▲":`+ ${L.length-5} more`}</button>`:""}</td>`}).join("")}
+function mxHead(first){return `<thead><tr><th style="width:${first}"><div class="h">${first==="34%"?"Positions &amp; incumbents in this category":"Position &amp; incumbent"}</div></th><th><div class="rh k0">R0 · Ready now</div></th><th><div class="rh k1">R1 · 1–2 yrs</div></th><th><div class="rh k2">R2 · 3–5 yrs</div></th></tr></thead>`}
+function mxInc(p){const vac=isVacant(p);const ret=incRet(p);
+  if(vac)return `<span class="vac">VACANT</span>${p.stNote&&statusLine(p)?`<div style="margin-top:4px">${statusLine(p)}</div>`:""}`;
+  return `<div class="incb">${mxAvatar(p.incumbent)}<div style="min-width:0"><button class="linkish" style="font-weight:600;text-align:left" data-person="${esc(p.incumbent)}">${esc(p.incumbent)}</button>
+    <div class="incm">${[p.grade,posAge(p)?posAge(p)+" yrs":"",p.jik?"JIK "+p.jik:"",ret?"retires "+fmtD(ret):""].filter(Boolean).map(esc).join(" · ")}</div>${statusLine(p)?`<div style="margin-top:3px">${statusLine(p)}</div>`:""}</div></div>`}
+function mxFlags(p){const rk=risks(p).filter(r=>!(isVacant(p)&&/vacant/i.test(r[1])));return rk.length?`<div class="flags">${rk.map(r=>`<span class="flag ${r[0]}" title="${esc(r[2])}">${esc(r[1])}</span>`).join("")}</div>`:""}
+function mxL2(ps){
+  return `<div class="mx-wrap"><table class="mx">${mxHead("30%")}<tbody>${ps.map(p=>{
+    if(S.editing==="l2:"+p.id)return `<tr id="pos-${p.id}"><td colspan="4" style="padding:12px">${l2Card(p)}</td></tr>`;
+    const pool=S.pools[p.pool];const latest=[pool,p].filter(x=>x?.updatedAt).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt))[0];
+    return `<tr id="pos-${p.id}" class="${risks(p).some(r=>r[0]==="crit")?"flagged":""}"><td>
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline"><strong style="font-size:15px">${esc(p.role)}</strong><span class="mono faint" style="font-size:11.5px">${esc(p.pgrade||"")}</span></div>
+      ${p.full&&p.full!==p.role?`<div class="faint" style="font-size:12px;margin-bottom:8px">${esc(p.full)}</div>`:`<div style="height:6px"></div>`}
+      ${mxInc(p)}${mxFlags(p)}
+      <div class="rowf">${editedLine(latest)}<span style="flex:1"></span>${S.canWrite?`<button class="btn" data-edit="l2:${p.id}">Edit</button>`:""}</div></td>
+      ${mxCols(pool,p.pool)}</tr>`}).join("")}</tbody></table></div>`}
+function mxCat(tr,cat,ps,cps,poolId,pool){
+  const c=counts(pool?.successors);
+  return `<tr class="catr"><td colspan="4"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><strong style="font-size:15px">${esc(cat)}</strong><span class="faint" style="font-size:12.5px">${(n=>n+(n===1?" position":" positions"))(ps.filter(p=>p.cat===cat).length)} · ${c.t} ${c.t===1?"successor":"successors"} · ${editedLine(pool)}</span><span style="flex:1"></span>${S.canWrite?`<button class="btn" data-edit="pool:${poolId}">Edit successors</button>`:""}</div></td></tr>
+  <tr><td>${cps.map(p=>`<div class="pbox" id="pos-${p.id}"><div class="tt"><strong>${esc(p.role)} <span class="mono faint" style="font-size:11px;font-weight:500">${esc(p.pgrade||"")}</span></strong>${S.canWrite?`<button class="btn ghost" style="padding:2px 9px" data-edit="pos:${p.id}">Edit</button>`:""}</div><div style="margin-top:6px">${mxInc(p)}</div>${mxFlags(p)}</div>`).join("")}</td>
+  ${mxCols(pool,poolId)}</tr>`}
 function posRow(p){
   const ed=S.editing==="pos:"+p.id;
   if(ed)return `<tr data-posrow="${p.id}"><td colspan="5"><div style="display:flex;flex-direction:column;gap:10px">${incEdit(p)}<div class="edit-actions"><button class="btn" data-cancel>Cancel</button><button class="btn primary" data-savepos="${p.id}">Save</button></div></div></td></tr>`;
@@ -1231,6 +1295,7 @@ document.addEventListener("click",e=>{
   if(t.hasAttribute("data-syncseed")){const y=+S.syncYear;t.disabled=true;guarded(async()=>{for(const p of posList("L2")){await S.db.collection("sync").add({year:y,role:p.role,pDate:"",pTime:"",aDate:"",aStart:"",aEnd:"",venue:"Genco",status:isVacant(p)?"Position vacant":"Planned",notes:"",...stamp()})}await logIt(`added ${posList("L2").length} syndication sessions for ${y}`,"One per SGM & L2 position","L2");return true});return}
   if(t.hasAttribute("data-more")){S.sf.lim+=150;$("#staffbody").innerHTML=staffBody();return}
   if(t.dataset.filter){S.filter=t.dataset.filter;render();return}
+  if(t.dataset.mxmore){S.mxOpen[t.dataset.mxmore]=!S.mxOpen[t.dataset.mxmore];const y=scrollY;render();scrollTo(0,y);return}
   if(t.dataset.edit){S.editing=t.dataset.edit;S.confirmDel=null;render();return}
   if(t.hasAttribute("data-cancel")){S.editing=null;S.confirmDel=null;render();return}
   if(t.hasAttribute("data-rm")){t.closest(".erow").remove();return}
