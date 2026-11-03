@@ -627,7 +627,7 @@ function render(){
   if(!Object.keys(S.positions).length&&isOwnerSession()){m.innerHTML=importPage()+syncNotice();return}
   if(!Object.keys(S.positions).length){m.innerHTML=`<div class="empty"><h2 style="font-size:17px;margin-bottom:6px">No positions yet</h2>Succession data appears here once it is loaded into the portal.</div>`+syncNotice();return}
   const f={overview:vOverview,L2:()=>vTrack("L2"),PGM:()=>vTrack("PGM"),PDPM:()=>vTrack("PDPM"),talent:vTalent,staff:vStaff,sync:vSync,log:vLog,ai:vAI}[S.tab]||vOverview;
-  m.innerHTML=rq+f()+syncNotice();
+  m.innerHTML=rq+revBar(S.tab)+f()+syncNotice();
   if(S.tab==="overview")ovAfter();
   if(S.tab==="log")paintLogNames();
 }
@@ -896,7 +896,9 @@ async function readKPIFile(file){
   rows.forEach(r=>{const id=String(r[idCol]??"").trim();if(!id)return;const k={};Object.entries(yc).forEach(([y,c])=>{const v=kpiFmt(r[c]);if(v)k[y]=v});by[id]={n:nmCol?String(r[nmCol]||"").trim():"",kpi:k};
     if(!hasStaff)return;
     const cat=catCol?String(r[catCol]||"").trim():"";const eg=egCol?String(r[egCol]||""):"";
-    if(catCol?!/^(executive|m-group)$/i.test(cat):/bukan|non/i.test(eg))return;
+    /* Executives, M-Group and top management (J grades, e.g. J00): category OR the Payscale Group_x grade decides */
+    const gcol=col("Payscale Group_x");const gr=gcol?String(r[gcol]||"").trim().toUpperCase():"";const mgmtGrade=/^(J|CM|M|E)\d/.test(gr);
+    if(!(mgmtGrade||(catCol?/^(executive|m-group|top management|pengurusan atasan|senior management)$/i.test(cat):!/bukan|non/i.test(eg))))return;
     const o={};Object.entries(SF_MAP).forEach(([f,c])=>{const cc=col(c);if(!cc)return;const v=r[cc];o[f]=["joined","ret","since"].includes(f)?xDate(v):f==="age"?(Number(v)||null):String(v??"").trim()});
     o.sn=id;if(o.em)o.em=o.em.toLowerCase();if(Object.keys(k).length)o.kpi=k;staff.push(o)});
   const m=file.name.match(/as\s*of\s*([A-Za-z]+\s*\d{4})/i);const asOf=m?m[1].replace(/\s+/," "):new Date().toLocaleString("en-GB",{month:"long",year:"numeric"});
@@ -950,7 +952,10 @@ async function saveKPI(){
   const {d,cardHit}=P;const db=S.db;const at=new Date().toISOString();
   try{
     const ops=[];
-    if(d.staff){const per=400;const n=Math.ceil(d.staff.length/per);for(let i=0;i<n;i++)ops.push(["set",db.doc("staff/chunk-"+i),{rows:d.staff.slice(i*per,(i+1)*per)}]);
+    if(d.staff){/* keep KPI already in the portal: a staffing file without KPI columns must not wipe it */
+      const oldKpi={};(S.staff||[]).forEach(r=>{if(r.kpi&&Object.keys(r.kpi).length)oldKpi[String(r.sn)]=r.kpi});
+      d.staff=d.staff.map(r=>{const o=oldKpi[String(r.sn)];if(!o)return r;const k={...o,...(r.kpi||{})};return {...r,kpi:k}});
+      const per=400;const n=Math.ceil(d.staff.length/per);for(let i=0;i<n;i++)ops.push(["set",db.doc("staff/chunk-"+i),{rows:d.staff.slice(i*per,(i+1)*per)}]);
       Object.keys(S.staffChunks).forEach(k=>{const m=k.match(/^chunk-(\d+)$/);if(!m||+m[1]>=n)ops.push(["del",db.doc("staff/"+k)])})}
     else Object.entries(S.staffChunks).forEach(([k,rows])=>{let ch=false;const nr=rows.map(r=>{const f=d.by[String(r.sn)];if(!f)return r;ch=true;const kpi={...(r.kpi||{})};d.years.forEach(y=>{if(f.kpi[y])kpi[y]=f.kpi[y]});return {...r,kpi}});if(ch)ops.push(["update",db.doc("staff/"+k),{rows:nr}])});
     cardHit.forEach(([id,c,f,r])=>{const u=r?cardFromStaff(c,r):{};
@@ -987,6 +992,7 @@ async function saveStaffEdit(del){
     else{const keys=Object.keys(S.staffChunks).sort();let last=keys[keys.length-1]||"chunk-0";let rows=[...(S.staffChunks[last]||[])];
       if(rows.length>=400){last="chunk-"+keys.length;rows=[]}rows.push(rec);await S.db.doc("staff/"+last).set({rows})}
     $("#dlg").close();toast(del?"Removed from the staff directory":old?"Staff record saved":"Staff added");
+    logIt(del?`removed ${prev?.n||old} from the staff directory`:old?`edited the staff record of ${rec.n}`:`added ${rec.n} to the staff directory`,del?"":[rec.sn,rec.g,rec.pos].filter(Boolean).join(" · "),"STAFF");
   }catch(e){console.error(e);toast(e?.code==="invalid_argument"?"You don't have permission to change the staff directory.":"Couldn't save the staff record.")}
 }
 function vStaff(){
@@ -1001,25 +1007,34 @@ function vStaff(){
   </div>
   <div id="staffbody">${staffBody()}</div></section>`;
 }
-S.tp={q:"",sort:"noms"};
+S.tp={q:"",sort:"noms",pos:""};
 function tpCurPost(x){const st=S.staffIdx[skey(x.name)];return st?(st.pos+(st.job&&st.job!==st.pos?" · "+st.job:"")):""}
-function tpRows(){const q=S.tp.q.trim().toLowerCase();let rows=talentRows();
+function tpPos(){return S.tp.pos?posList().find(p=>p.id===S.tp.pos)||null:null}
+function tpPosOptions(){const g=["L2","PGM","PDPM"].map(tr=>{const ps=posList(tr);if(!ps.length)return "";return `<optgroup label="${esc(TRACKS[tr].name)}">${ps.map(p=>`<option value="${esc(p.id)}" ${S.tp.pos===p.id?"selected":""}>${esc(p.role)} — ${esc(isVacant(p)?"Vacant":p.incumbent||"—")}</option>`).join("")}</optgroup>`}).join("");return `<option value="">All positions</option>${g}`}
+function tpRows(){const q=S.tp.q.trim().toLowerCase();let rows=talentRows();const P=tpPos();
+  if(P){rows=rows.filter(x=>x.noms.some(n=>n.pool===P.pool)).map(x=>({...x,_r:x.noms.find(n=>n.pool===P.pool).r}))}
   if(q)rows=rows.filter(x=>[x.name,tpCurPost(x),...x.noms.map(n=>n.label+" "+TRACKS[n.track].short+" "+shortLabel(n))].join(" ").toLowerCase().includes(q));
   const by=S.tp.sort;if(by==="az")rows.sort((a,b)=>a.name.localeCompare(b.name));else if(by==="za")rows.sort((a,b)=>b.name.localeCompare(a.name));
+  else if(P)rows.sort((a,b)=>rank[a._r]-rank[b._r]||a.name.localeCompare(b.name));
   return rows}
 function tpBody(){const rows=tpRows();const q=S.tp.q.trim().toLowerCase();const hl=t=>q?hlName(t,q):esc(t);
-  return rows.map(x=>{const pr=S.people[norm(x.name)];const cp=tpCurPost(x);return `<tr><td><button class="linkish" data-person="${esc(x.name)}">${hl(x.name)}</button>${cp?`<div class="faint" style="font-size:12px">${hl(cp)}</div>`:""}</td><td class="mono">${esc(S.staffIdx[skey(x.name)]?.g||x.g||"")}</td><td class="num">${staffAge(S.staffIdx[skey(x.name)])??pr?.age??""}</td><td><span class="chip c${rank[x.noms[0].r]}">${x.noms[0].r} · ${RL[x.noms[0].r]}</span></td><td><div class="chips" style="justify-content:flex-start">${x.noms.map(n=>`<span class="chip c${rank[n.r]}" title="${esc(TRACKS[n.track].short+": "+n.label)}">${hl(shortLabel(n))} ${n.r}</span>`).join("")}</div></td></tr>`}).join("")||`<tr><td colspan="5" class="faint">No one matches “${esc(S.tp.q)}”.</td></tr>`}
+  return rows.map(x=>{const pr=S.people[norm(x.name)];const cp=tpCurPost(x);return `<tr><td><button class="linkish" data-person="${esc(x.name)}">${hl(x.name)}</button>${cp?`<div class="faint" style="font-size:12px">${hl(cp)}</div>`:""}</td><td class="mono">${esc(S.staffIdx[skey(x.name)]?.g||x.g||"")}</td><td class="num">${staffAge(S.staffIdx[skey(x.name)])??pr?.age??""}</td><td>${(()=>{const r=x._r||x.noms[0].r;return `<span class="chip c${rank[r]}">${r} · ${RL[r]}</span>`})()}</td><td><div class="chips" style="justify-content:flex-start">${x.noms.map(n=>`<span class="chip c${rank[n.r]}" title="${esc(TRACKS[n.track].short+": "+n.label)}">${hl(shortLabel(n))} ${n.r}</span>`).join("")}</div></td></tr>`}).join("")||`<tr><td colspan="5" class="faint">No one matches “${esc(S.tp.q)}”.</td></tr>`}
+function tpIncInfo(){const P=tpPos();if(!P)return "";const st=S.staffIdx?.[skey(P.incumbent)];const c=counts(S.pools[P.pool]?.successors);
+  return `<div class="panel" style="padding:10px 16px;margin-bottom:12px;display:flex;gap:18px;flex-wrap:wrap;align-items:baseline;font-size:13.5px"><span><span class="faint">Position</span> <strong>${esc(P.full||P.role)}</strong></span><span><span class="faint">Incumbent</span> ${isVacant(P)?"<strong>Vacant</strong>":`<button class="linkish" data-person="${esc(P.incumbent)}">${esc(P.incumbent)}</button>`}${st?` · ${esc(st.g)} · ${staffAge(st)??""} yrs${st.ret?" · retires "+esc(fmtD(st.ret)):""}`:""}</span><span><span class="faint">Successors</span> R0 ${c.R0} · R1 ${c.R1} · R2 ${c.R2}</span></div>`}
 function tpCount(){const n=tpRows().length,t=talentRows().length;return n===t?`${t} people`:`${n} of ${t} people`}
 function vTalent(){
   return `<section><div class="section-head"><div><div class="eyebrow">Everyone named as a successor</div><h2>Talent pool · <span id="tp-count">${tpCount()}</span></h2></div>${legend}</div>
   <div class="toolbar" style="margin-bottom:12px;align-items:flex-end">
     <div class="field" style="flex:1 1 320px"><label for="tp-q">Search</label><input id="tp-q" type="search" data-tpq value="${esc(S.tp.q)}" placeholder="Name, current post or nominated position" autocomplete="off"></div>
+    <div class="field" style="flex:1 1 300px"><label for="tp-pos">Incumbent position</label><select id="tp-pos" data-tppos>${tpPosOptions()}</select></div>
     <div class="field" style="flex:0 1 200px"><label for="tp-sort">Sort</label><select id="tp-sort" data-tpsort><option value="noms" ${S.tp.sort==="noms"?"selected":""}>Most nominations</option><option value="az" ${S.tp.sort==="az"?"selected":""}>Name A–Z</option><option value="za" ${S.tp.sort==="za"?"selected":""}>Name Z–A</option></select></div>
   </div>
-  <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Grade</th><th>Age</th><th>Best readiness</th><th>Nominations</th></tr></thead><tbody id="tp-body">${tpBody()}</tbody></table></div></section>`;
+  <div id="tp-inc">${tpIncInfo()}</div>
+  <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Grade</th><th>Age</th><th id="tp-rh">${tpPos()?"Readiness for this position":"Best readiness"}</th><th>Nominations</th></tr></thead><tbody id="tp-body">${tpBody()}</tbody></table></div></section>`;
 }
 document.addEventListener("input",e=>{if(e.target.matches("[data-tpq]")){S.tp.q=e.target.value;const b=document.getElementById("tp-body");if(b)b.innerHTML=tpBody();const c=document.getElementById("tp-count");if(c)c.textContent=tpCount()}});
-document.addEventListener("change",e=>{if(e.target.matches("[data-tpsort]")){S.tp.sort=e.target.value;const b=document.getElementById("tp-body");if(b)b.innerHTML=tpBody()}});
+document.addEventListener("change",e=>{if(e.target.matches("[data-tppos]")){S.tp.pos=e.target.value;const b=document.getElementById("tp-body");if(b)b.innerHTML=tpBody();const c=document.getElementById("tp-count");if(c)c.textContent=tpCount();const h=document.getElementById("tp-rh");if(h)h.textContent=tpPos()?"Readiness for this position":"Best readiness";const i=document.getElementById("tp-inc");if(i)i.innerHTML=tpIncInfo();return}
+  if(e.target.matches("[data-tpsort]")){S.tp.sort=e.target.value;const b=document.getElementById("tp-body");if(b)b.innerHTML=tpBody()}});
 const SYNC_ST=["Planned","Done","Postponed","Cancelled","Position vacant"];
 function syncYears(){const ys=new Set(Object.values(S.syncs).map(r=>+r.year).filter(Boolean));ys.add(NOW.getFullYear());if(S.syncYear)ys.add(+S.syncYear);return [...ys].sort((a,b)=>b-a)}
 function tm(t){if(!t)return"";const [h,m]=t.split(":").map(Number);return `${((h+11)%12)+1}.${String(m).padStart(2,"0")} ${h<12?"am":"pm"}`}
@@ -1091,9 +1106,10 @@ async function saveSync(id,row){
   if(!ch.length)return null;
   await S.db.doc("sync/"+id).update({...v,...stamp()});await logIt(`updated syndication for ${v.role} (${v.year})`,ch.join(" · "),"L2");S.syncYear=v.year;return true;
 }
+const LOG_AREA={L2:"SGM & L2",PGM:"PGM",PDPM:"PD / PM",TC:"Talent card",STAFF:"Staff directory",ACCESS:"Access"};
 function vLog(){
   if(!S.log.length)return `<section><div class="section-head"><h2>Activity</h2></div><div class="empty">No edits yet. Changes to incumbents and successor lists will be listed here with who made them.</div></section>`;
-  return `<section><div class="section-head"><div><div class="eyebrow">Latest 80 changes</div><h2>Activity</h2></div></div><div class="panel"><ul class="log">${S.log.map(l=>`<li><img alt="" data-av="${esc(l.by||"")}" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><div><strong data-nm="${esc(l.by||"")}">Someone</strong> ${esc(l.text)}${l.detail?`<div class="faint" style="font-size:12.5px">${esc(l.detail)}</div>`:""}</div><span class="faint" style="font-size:12px;white-space:nowrap">${fmtAgo(l.at)}</span></li>`).join("")}</ul></div></section>`;
+  return `<section><div class="section-head"><div><div class="eyebrow">Latest 80 changes</div><h2>Activity</h2></div></div><div class="panel"><ul class="log">${S.log.map(l=>`<li><img alt="" data-av="${esc(l.by||"")}" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><div>${LOG_AREA[l.track]?`<span class="pill" style="font-size:11px;margin-right:6px">${LOG_AREA[l.track]}</span>`:""}<strong data-nm="${esc(l.by||"")}">Someone</strong> ${esc(l.text)}${l.detail?`<div class="faint" style="font-size:12.5px">${esc(l.detail)}</div>`:""}</div><span class="faint" style="font-size:12px;white-space:nowrap">${esc(fmtDT(l.at))}</span></li>`).join("")}</ul></div></section>`;
 }
 async function paintLogNames(){document.querySelectorAll("[data-nm]").forEach(el=>{const v=el.dataset.nm||"";el.textContent=v?(v.endsWith("@"+USERNAME_DOMAIN)?v.split("@")[0]:v):"Portal"})}
 
@@ -1132,7 +1148,25 @@ function diffBench(a,b){
   A.forEach((s,k)=>{if(!B.has(k))out.push(`− ${s.n}`)});return out;
 }
 function dupCheck(list){const seen=new Set();for(const s of list){const k=norm(s.n);if(seen.has(k))return s.n;seen.add(k)}return null}
-async function logIt(text,detail,track){if(secretView())return;try{await S.db.collection("log").add({at:new Date().toISOString(),by:S.auth.email||"",text,detail:detail||"",track:track||""})}catch(e){}}
+async function logIt(text,detail,track){if(!S.auth?.role||S.auth.role==="pending"||S.auth.role==="viewer")return;const at=new Date().toISOString(),by=S.auth.email||"";
+  try{await S.db.collection("log").add({at,by,text,detail:detail||"",track:track||""})}catch(e){console.warn("log not written",e)}
+  if(["L2","PGM","PDPM"].includes(track)&&isFull()){try{const cur=S.trackUpd||{};const nx={...cur,[track]:{at,by,text}};S.trackUpd=nx;await S.db.doc("meta/trackupdates").set(nx)}catch(e){console.warn(e)}}}
+/* ---------- last updated / reviewed strip (Overview, SGM, PGM, PD/PM) ---------- */
+const REV_TABS={overview:"Overview",L2:"SGM & L2 Leadership",PGM:"PGM / Subsidiary",PDPM:"PD / PM"};
+function fmtDT(iso){if(!iso)return "";const d=new Date(iso);if(isNaN(d))return "";return d.toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})+", "+d.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}
+const whoName=v=>!v?"":v.endsWith("@"+USERNAME_DOMAIN)?v.split("@")[0]:v;
+function trackLastUpd(tr){let best=S.trackUpd?.[tr]||null;
+  const cand=[...posList(tr).map(p=>p.updatedAt),...poolList(tr).map(p=>p.updatedAt),...(S.log||[]).filter(l=>l.track===tr).map(l=>l.at)].filter(Boolean);
+  const mx=cand.sort().pop();if(mx&&(!best||mx>best.at)){const l=(S.log||[]).find(x=>x.track===tr&&x.at===mx);best={at:mx,by:l?.by||"",text:l?.text||""}}return best}
+function revBar(k){if(!REV_TABS[k]||secretView())return "";const r=S.reviewed?.[k];const u=k==="overview"?null:trackLastUpd(k);const can=isFull();
+  const pill=(lbl,val,sub)=>`<div style="display:flex;flex-direction:column;gap:1px;min-width:0"><span style="font-weight:700;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;opacity:.65">${lbl}</span><span style="font-size:13.5px;font-weight:600">${val}</span>${sub?`<span class="faint" style="font-size:12px">${sub}</span>`:""}</div>`;
+  return `<div class="panel rev-bar" style="display:flex;gap:26px;align-items:center;flex-wrap:wrap;padding:10px 16px;margin-bottom:14px">
+    ${k==="overview"?"":pill("Last updated",u?esc(fmtDT(u.at)):`<span class="faint">No edits recorded yet</span>`,u?esc([whoName(u.by),u.text].filter(Boolean).join(" · ")):"")}
+    ${pill("Date reviewed",r?esc(fmtDT(r.at)):`<span class="faint">Not reviewed yet</span>`,r?esc("by "+whoName(r.by)):"")}
+    ${can?`<span style="flex:1"></span><button class="btn" data-review="${k}">${r?"Mark reviewed again":"Mark as reviewed"}</button>`:""}</div>`}
+async function markReviewed(k,btn){if(!isFull()||!REV_TABS[k])return;const at=new Date().toISOString(),by=S.auth.email||"";if(btn){btn.disabled=true;btn.textContent="Saving…"}
+  try{const nx={...(S.reviewed||{}),[k]:{at,by}};S.reviewed=nx;await S.db.doc("meta/reviewed").set(nx);await logIt(`marked ${REV_TABS[k]} as reviewed`,"","");render();toast("Review date saved")}
+  catch(e){console.error(e);toast("Couldn't save the review date.");if(btn){btn.disabled=false;btn.textContent="Mark as reviewed"}}}
 function stamp(){return {updatedAt:new Date().toISOString(),updatedBy:S.uid||""}}
 async function savePool(poolId,root,label){
   const list=readBench(root);const d=dupCheck(list);if(d){toast(`${d} is listed twice. Remove one entry before saving.`);return false}
@@ -1888,11 +1922,11 @@ async function tcAddAdmin(){
     const app2=firebase.apps.find(a=>a.name==="adminCreate")||firebase.initializeApp(FIREBASE_CONFIG,"adminCreate");
     try{await app2.auth().createUserWithEmailAndPassword(email,pw)}catch(err){if(err.code==="auth/email-already-in-use"){toast("That username is already taken. Choose another username.");return}throw err}
     try{await app2.auth().signOut()}catch(e){}
-    const rl=$("#tc-admin-role")?.value||"admin";await FB.db.doc("roles/"+email).set({email,role:["admin","editor","viewer"].includes(rl)?rl:"admin",addedAt:new Date().toISOString(),addedBy:S.auth.email});
+    const rl=$("#tc-admin-role")?.value||"admin";await FB.db.doc("roles/"+email).set({email,role:["admin","editor","viewer"].includes(rl)?rl:"admin",addedAt:new Date().toISOString(),addedBy:S.auth.email});logIt(`gave ${email.split("@")[0]} ${({viewer:"view only",editor:"full access"})[rl]||"admin"} access`,"","ACCESS");
     $("#tc-admin-new").value="";$("#tc-admin-pw").value="";toast("User added — they sign in with the username and password");
   }catch(err){console.error(err);toast("Couldn't add the admin: "+(err.code||err.message))}
 }
-async function tcRemoveAdmin(em){try{await FB.db.doc("roles/"+em).delete();toast("Access removed")}catch(e){toast("Couldn't remove the admin.")}}
+async function tcRemoveAdmin(em){try{await FB.db.doc("roles/"+em).delete();toast("Access removed");logIt(`removed access for ${whoName(em)}`,"","ACCESS")}catch(e){toast("Couldn't remove the admin.")}}
 async function changeMyPw(){const pw=$("#my-pw")?.value||"";if(pw.length<6){toast("Password must be at least 6 characters.");return}
   try{await FB.auth.currentUser.updatePassword(pw);$("#my-pw").value="";toast("Password changed")}catch(err){toast(err.code==="auth/requires-recent-login"?"For safety, sign out and sign in again, then change your password.":"Couldn't change the password.")}}
 /* ---------- events ---------- */
@@ -1909,6 +1943,7 @@ document.addEventListener("click",e=>{
   if(t.hasAttribute("data-tcret")){const r=S.tc.ret;S.tc.ret=null;S.tc.view="list";S.tc.mode="view";S.editing=null;closeSlide();if(r){S.tab=r.tab;S.filter=r.filter??S.filter}render();if(r)restoreY(r.y);return}
   if(t.hasAttribute("data-tcback")){S.tc.ret=null;S.tc.view="list";S.tc.mode="view";S.editing=null;closeSlide();render();restoreY(S.tc.listY||0);return}
   if(t.hasAttribute("data-aiexp")){if(isOwnerSession())aiExport();return}
+  if(t.dataset.review){markReviewed(t.dataset.review,t);return}
   if(t.hasAttribute("data-syncstaff")){if(t.disabled)return;t.disabled=true;t.textContent="Syncing…";syncFromStaffing().catch(e=>{console.error(e);toast("Couldn't sync: "+(e.code||e.message))}).finally(()=>{t.disabled=false;t.textContent="Sync talent cards & successors"});return}
   if(t.hasAttribute("data-tcpptup")){document.getElementById("tc-ppt")?.click();return}
   if(t.hasAttribute("data-tcimpx")){S.tc.imp=null;render();return}
@@ -1986,7 +2021,7 @@ async function sendRequest(){
 async function decideRequest(id,role){
   const r=(S.reqs||{})[id]||{};
   try{if(role){await FB.db.doc("roles/"+id).set({email:id,role,name:r.name||"",addedAt:new Date().toISOString(),addedBy:S.auth.email})}
-    await FB.db.doc("requests/"+id).delete();toast(role?`${r.name||id} approved (${({viewer:"view only",editor:"full access"})[role]||"admin"})`:"Request rejected")}
+    await FB.db.doc("requests/"+id).delete();logIt(role?`approved access for ${r.name||id} (${({viewer:"view only",editor:"full access"})[role]||"admin"})`:`rejected the access request from ${r.name||id}`,"","ACCESS");toast(role?`${r.name||id} approved (${({viewer:"view only",editor:"full access"})[role]||"admin"})`:"Request rejected")}
   catch(e){console.error(e);toast("Couldn't update the request.")}
 }
 document.addEventListener("submit",e=>{if(e.target.id==="req-form"){e.preventDefault();sendRequest()}});
@@ -2003,7 +2038,7 @@ async function importData(){
   try{const data=JSON.parse(await f.text());const jobs=[];
     for(const col of ["positions","pools","sync","log","meta","staff","talentCards"])for(const [id,doc] of Object.entries(data[col]||{}))jobs.push([col,id,doc]);
     let done=0;for(let i=0;i<jobs.length;i+=40){const b=FB.db.batch();jobs.slice(i,i+40).forEach(([c,id,d])=>b.set(FB.db.doc(c+"/"+id),d));await b.commit();done=Math.min(jobs.length,i+40);st.textContent=`Imported ${done} of ${jobs.length} records…`}
-    st.textContent=`Done — ${jobs.length} records imported.`;toast("Import complete")}
+    st.textContent=`Done — ${jobs.length} records imported.`;toast("Import complete");logIt(`imported portal data from ${f.name}`,`${jobs.length} records`,"")}
   catch(e){console.error(e);st.textContent="Import failed: "+(e.message||e);btn.disabled=false}
 }
 function syncNotice(inline){
@@ -2055,6 +2090,8 @@ async function onAuth(u){
   }else{S.loaded.p=S.loaded.q=true;S.tc.admins={[em]:{email:em}};S.tc.adminsLoaded=true}
   sub(db.collection("staff"),s=>{S.staffChunks={};s.docs.forEach(d=>S.staffChunks[d.id]=d.data()?.rows||[]);staffLoaded();if(!S.editing)render()});
   sub(db.doc("meta/staffinfo"),s=>{S.staffInfo=s.data()||null});
+  if(!secretView()){sub(db.doc("meta/reviewed"),s=>{S.reviewed=s.data()||{};if(REV_TABS[S.tab]&&!S.editing)render()});
+    sub(db.doc("meta/trackupdates"),s=>{S.trackUpd=s.data()||{};if(REV_TABS[S.tab]&&!S.editing)render()})}
   sub(db.collection("talentCards"),s=>{S.tc.cards={};s.docs.forEach(d=>S.tc.cards[d.id]=d.data());S.tc.loaded=true;safeRender()});
   render();updateWho();
 }
